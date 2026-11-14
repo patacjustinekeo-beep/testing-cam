@@ -3,286 +3,235 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Fast Green Aura Tracker</title>
-  <!-- Preload pinned MediaPipe files so Chrome downloads them immediately -->
-  <link rel="preload" href="https://jsdelivr.net" as="script" crossorigin="anonymous" />
+  <title>Green Aura v5</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       background: #050a07;
       color: #e0ffe8;
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: system-ui, sans-serif;
       height: 100vh;
       overflow: hidden;
-      display: flex;
-      justify-content: center;
-      align-items: center;
     }
     #status {
-      position: absolute;
+      position: fixed;
       top: 16px;
-      z-index: 10;
-      background: rgba(0, 20, 10, 0.85);
-      padding: 8px 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      background: rgba(0, 20, 10, 0.9);
+      padding: 10px 18px;
       border-radius: 20px;
-      font-size: 13px;
-      border: 1px solid rgba(0, 255, 128, 0.4);
-      pointer-events: none;
+      font-size: 14px;
+      border: 1px solid #00ff80;
       text-align: center;
-      max-width: 90vw;
-    }
-    #viewer {
-      position: relative;
-      width: 100vw;
-      height: 100vh;
-      background: #000;
+      width: max-content;
+      max-width: 92vw;
     }
     video, canvas {
-      position: absolute;
+      position: fixed;
       top: 0;
       left: 0;
-      width: 100%;
-      height: 100%;
+      width: 100vw;
+      height: 100vh;
       object-fit: cover;
+      z-index: 1;
     }
     .mirrored { transform: scaleX(-1); }
     #controls {
-      position: absolute;
-      bottom: 24px;
-      z-index: 10;
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
       display: flex;
       gap: 12px;
     }
     button {
-      padding: 14px 26px;
+      padding: 16px 28px;
       font-size: 16px;
       font-weight: 700;
       border: none;
       border-radius: 30px;
       cursor: pointer;
     }
-    button:active { transform: scale(0.95); }
-    #startBtn {
-      background: #00ff80;
-      color: #002211;
-    }
-    #switchBtn {
-      background: rgba(10, 30, 20, 0.85);
-      color: #00ff80;
-      border: 1px solid #00ff80;
-      display: none;
-    }
+    #startBtn { background: #00ff80; color: #002211; }
+    #switchBtn { background: #0d261a; color: #00ff80; border: 2px solid #00ff80; display: none; }
   </style>
 </head>
 <body>
 
-  <div id="status">Tap Start Camera</div>
-
-  <div id="viewer">
-    <video id="webcam" autoplay playsinline muted class="mirrored"></video>
-    <canvas id="auraCanvas" class="mirrored"></canvas>
-  </div>
+  <div id="status">Tap Start Camera (v5)</div>
+  <video id="webcam" autoplay playsinline muted class="mirrored"></video>
+  <canvas id="auraCanvas" class="mirrored"></canvas>
 
   <div id="controls">
     <button id="startBtn" type="button">Start Camera</button>
     <button id="switchBtn" type="button">Switch Camera</button>
   </div>
 
-  <!-- 1. Standalone Camera Script (Runs immediately, never blocked by AI download) -->
   <script>
-    const video = document.getElementById("webcam");
-    const canvas = document.getElementById("auraCanvas");
-    const ctx = canvas.getContext("2d");
-    const startBtn = document.getElementById("startBtn");
-    const switchBtn = document.getElementById("switchBtn");
-    const statusText = document.getElementById("status");
+    var video = document.getElementById("webcam");
+    var canvas = document.getElementById("auraCanvas");
+    var ctx = canvas.getContext("2d");
+    var startBtn = document.getElementById("startBtn");
+    var switchBtn = document.getElementById("switchBtn");
+    var statusText = document.getElementById("status");
 
-    let currentStream = null;
-    let facingMode = "user";
-    let cameraActive = false;
+    var currentStream = null;
+    var facingMode = "user";
+    var cameraActive = false;
 
-    async function openCamera() {
-      statusText.innerText = "Starting camera...";
+    function startCameraNow() {
+      statusText.innerText = "Button tapped! Opening camera...";
       if (currentStream) {
-        currentStream.getTracks().forEach(function (track) { track.stop(); });
+        currentStream.getTracks().forEach(function(t) { t.stop(); });
       }
-
-      try {
-        currentStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: facingMode,
-            width: { ideal: 320 },
-            height: { ideal: 240 }
-          },
-          audio: false
-        });
-
-        video.srcObject = currentStream;
-        video.classList.toggle("mirrored", facingMode === "user");
-        canvas.classList.toggle("mirrored", facingMode === "user");
-
-        await video.play();
-        canvas.width = video.videoWidth || 320;
-        canvas.height = video.videoHeight || 240;
-
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        statusText.innerText = "Error: Browser blocked camera API (use HTTPS).";
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facingMode, width: { ideal: 320 }, height: { ideal: 240 } },
+        audio: false
+      }).then(function(stream) {
+        currentStream = stream;
+        video.srcObject = stream;
+        video.className = facingMode === "user" ? "mirrored" : "";
+        canvas.className = facingMode === "user" ? "mirrored" : "";
+        video.play();
+        canvas.width = 320;
+        canvas.height = 240;
         startBtn.style.display = "none";
         switchBtn.style.display = "inline-block";
         cameraActive = true;
-        statusText.innerText = window.aiLoaded
-          ? "Open your hand for green aura!"
-          : "Camera on! Loading hand AI...";
-      } catch (err) {
-        statusText.innerText = "Camera error: " + err.message;
-      }
+        statusText.innerText = window.aiReady ? "Open your hand for green aura!" : "Camera ON! Loading hand AI...";
+      }).catch(function(err) {
+        statusText.innerText = "Camera denied/error: " + err.name + " - " + err.message;
+      });
     }
 
-    startBtn.addEventListener("click", openCamera);
-    switchBtn.addEventListener("click", function () {
+    startBtn.onclick = startCameraNow;
+    switchBtn.onclick = function() {
       facingMode = facingMode === "user" ? "environment" : "user";
-      openCamera();
-    });
+      startCameraNow();
+    };
   </script>
 
-  <!-- 2. Load Pinned MediaPipe Hands Separately -->
   <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
 
-  <!-- 3. Hand Tracking & Green Aura Script -->
   <script>
-    window.aiLoaded = false;
-    let latestLandmarks = null;
-    let auraIntensity = 0;
-    let pulseAngle = 0;
-    let isSending = false;
+    window.aiReady = false;
+    var latestHand = null;
+    var auraLevel = 0;
+    var angle = 0;
+    var busy = false;
 
-    const TIPS = "8,12,16,20".split(",").map(Number);
-    const PIPS = "6,10,14,18".split(",").map(Number);
-    const BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
+    var TIPS = "8,12,16,20".split(",").map(Number);
+    var PIPS = "6,10,14,18".split(",").map(Number);
+    var BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
 
-    function isHandOpen(lm) {
-      const wrist = lm.at(0);
-      let openFingers = 0;
-      for (let i = 0; i < 4; i++) {
-        const tip = lm.at(TIPS.at(i));
-        const pip = lm.at(PIPS.at(i));
-        const dTip = Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2);
-        const dPip = Math.pow(pip.x - wrist.x, 2) + Math.pow(pip.y - wrist.y, 2);
-        if (dTip > dPip * 1.2) openFingers++;
+    function checkOpen(lm) {
+      var w = lm.at(0);
+      var count = 0;
+      for (var i = 0; i < 4; i++) {
+        var t = lm.at(TIPS.at(i));
+        var p = lm.at(PIPS.at(i));
+        var dt = Math.pow(t.x - w.x, 2) + Math.pow(t.y - w.y, 2);
+        var dp = Math.pow(p.x - w.x, 2) + Math.pow(p.y - w.y, 2);
+        if (dt > dp * 1.2) count++;
       }
-      return openFingers >= 3;
+      return count >= 3;
     }
 
-    function drawGreenAura(lm, intensity) {
-      const w = canvas.width;
-      const h = canvas.height;
-      const palm = lm.at(9);
-      const px = palm.x * w;
-      const py = palm.y * h;
+    function drawAura(lm, power) {
+      var w = canvas.width;
+      var h = canvas.height;
+      var palm = lm.at(9);
+      var px = palm.x * w;
+      var py = palm.y * h;
 
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
 
-      // Soft radial aura glow
-      const radius = Math.min(w, h) * 0.4 * intensity;
-      const grad = ctx.createRadialGradient(px, py, 4, px, py, radius);
-      grad.addColorStop(0, "rgba(150, 255, 190, " + (0.7 * intensity) + ")");
-      grad.addColorStop(0.5, "rgba(0, 230, 118, " + (0.35 * intensity) + ")");
-      grad.addColorStop(1, "rgba(0, 255, 100, 0)");
-
-      ctx.fillStyle = grad;
+      var r = Math.min(w, h) * 0.42 * power;
+      var g = ctx.createRadialGradient(px, py, 4, px, py, r);
+      g.addColorStop(0, "rgba(150,255,190," + (0.75 * power) + ")");
+      g.addColorStop(0.5, "rgba(0,230,118," + (0.35 * power) + ")");
+      g.addColorStop(1, "rgba(0,255,100,0)");
+      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fill();
 
-      // Wrapping neon energy lines along fingers
       ctx.lineCap = "round";
       ctx.beginPath();
-      for (let i = 0; i < BONES.length; i++) {
-        const parts = BONES.at(i).split("-");
-        const a = lm.at(Number(parts.at(0)));
-        const b = lm.at(Number(parts.at(1)));
+      for (var i = 0; i < BONES.length; i++) {
+        var pair = BONES.at(i).split("-");
+        var a = lm.at(Number(pair.at(0)));
+        var b = lm.at(Number(pair.at(1)));
         ctx.moveTo(a.x * w, a.y * h);
         ctx.lineTo(b.x * w, b.y * h);
       }
-
-      ctx.strokeStyle = "rgba(0, 255, 128, " + (0.4 * intensity) + ")";
-      ctx.lineWidth = 8 + Math.sin(pulseAngle * 2) * 2;
+      ctx.strokeStyle = "rgba(0,255,128," + (0.45 * power) + ")";
+      ctx.lineWidth = 8;
       ctx.stroke();
-
-      ctx.strokeStyle = "rgba(210, 255, 225, " + (0.95 * intensity) + ")";
+      ctx.strokeStyle = "rgba(220,255,230," + (0.95 * power) + ")";
       ctx.lineWidth = 2.5;
       ctx.stroke();
 
-      // Orbiting energy ring wrapping around open hand
-      const ringR = 35 + Math.sin(pulseAngle) * 6;
-      ctx.strokeStyle = "rgba(100, 255, 160, " + (0.85 * intensity) + ")";
+      var ring = 35 + Math.sin(angle) * 6;
+      ctx.strokeStyle = "rgba(100,255,160," + (0.85 * power) + ")";
       ctx.lineWidth = 2;
       ctx.setLineDash("12,6".split(",").map(Number));
-      ctx.lineDashOffset = -pulseAngle * 18;
-
+      ctx.lineDashOffset = -angle * 18;
       ctx.beginPath();
-      ctx.ellipse(px, py, ringR * 1.25, ringR * 0.85, pulseAngle * 0.5, 0, Math.PI * 2);
+      ctx.ellipse(px, py, ring * 1.25, ring * 0.85, angle * 0.5, 0, Math.PI * 2);
       ctx.stroke();
 
       ctx.restore();
     }
 
-    // Safely initialize MediaPipe only after script loads
     if (window.Hands) {
-      const hands = new window.Hands({
-        locateFile: function (file) {
+      var hands = new window.Hands({
+        locateFile: function(file) {
           return "https://jsdelivr.net" + file;
         }
       });
-
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 0,
         minDetectionConfidence: 0.45,
         minTrackingConfidence: 0.45
       });
-
-      hands.onResults(function (results) {
-        if (!window.aiLoaded) {
-          window.aiLoaded = true;
-          if (cameraActive) {
-            statusText.innerText = "Open your hand for green aura!";
-          }
+      hands.onResults(function(res) {
+        if (!window.aiReady) {
+          window.aiReady = true;
+          if (cameraActive) statusText.innerText = "Open your hand for green aura!";
         }
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-          latestLandmarks = results.multiHandLandmarks.at(0);
-        } else {
-          latestLandmarks = null;
-        }
+        latestHand = (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) ? res.multiHandLandmarks.at(0) : null;
       });
 
-      async function loop() {
+      function tick() {
         if (cameraActive && video.readyState >= 2) {
-          if (!isSending) {
-            isSending = true;
-            try {
-              await hands.send({ image: video });
-            } catch (e) {}
-            isSending = false;
+          if (!busy) {
+            busy = true;
+            hands.send({ image: video }).then(function() { busy = false; }).catch(function() { busy = false; });
           }
-
           ctx.clearRect(0, 0, canvas.width, canvas.height);
-          pulseAngle += 0.12;
-
-          if (latestLandmarks && isHandOpen(latestLandmarks)) {
-            auraIntensity = Math.min(1, auraIntensity + 0.18);
+          angle += 0.12;
+          if (latestHand && checkOpen(latestHand)) {
+            auraLevel = Math.min(1, auraLevel + 0.18);
           } else {
-            auraIntensity = Math.max(0, auraIntensity - 0.12);
+            auraLevel = Math.max(0, auraLevel - 0.12);
           }
-
-          if (latestLandmarks && auraIntensity > 0.02) {
-            drawGreenAura(latestLandmarks, auraIntensity);
+          if (latestHand && auraLevel > 0.02) {
+            drawAura(latestHand, auraLevel);
           }
         }
-        requestAnimationFrame(loop);
+        requestAnimationFrame(tick);
       }
-      loop();
-    } else {
-      statusText.innerText = "AI script blocked by network. Camera still works!";
+      tick();
     }
   </script>
 </body>
