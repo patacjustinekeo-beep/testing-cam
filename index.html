@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Fast Green Aura Tracker</title>
+  <title>Green Aura Hand Tracker</title>
+  <!-- Classic MediaPipe Hands CDN (Fast & Reliable on Android Tablets) -->
+  <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -86,12 +88,7 @@
     <button id="switchBtn" type="button" onclick="window.switchCam()">Switch Camera</button>
   </div>
 
-  <script type="module">
-    import {
-      HandLandmarker,
-      FilesetResolver
-    } from "https://jsdelivr.net";
-
+  <script>
     const video = document.getElementById("webcam");
     const canvas = document.getElementById("auraCanvas");
     const ctx = canvas.getContext("2d");
@@ -99,19 +96,46 @@
     const switchBtn = document.getElementById("switchBtn");
     const statusText = document.getElementById("status");
 
-    let handLandmarker = null;
     let currentStream = null;
     let facingMode = "user";
     let isRunning = false;
     let auraIntensity = 0;
     let pulseAngle = 0;
+    let latestLandmarks = null;
+    let aiReady = false;
 
-    // 1. Instant Camera Handler
+    // 1. Setup Classic MediaPipe Hands (Lite model = ultra-fast on tablets)
+    const hands = new window.Hands({
+      locateFile: function (file) {
+        return "https://jsdelivr.net" + file;
+      }
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 0, // 0 = Lite model (fastest load & highest FPS)
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(function (results) {
+      if (!aiReady) {
+        aiReady = true;
+        statusText.innerText = "Open your hand for green aura!";
+      }
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        latestLandmarks = results.multiHandLandmarks.at(0);
+      } else {
+        latestLandmarks = null;
+      }
+    });
+
+    // 2. Start & Switch Camera
     window.startCam = async function () {
       if (currentStream) {
         currentStream.getTracks().forEach(function (t) { t.stop(); });
       }
-      statusText.innerText = "Requesting camera permission...";
+      statusText.innerText = "Opening camera...";
 
       try {
         currentStream = await navigator.mediaDevices.getUserMedia({
@@ -133,13 +157,13 @@
           canvas.height = video.videoHeight;
           startBtn.style.display = "none";
           switchBtn.style.display = "inline-block";
-          statusText.innerText = handLandmarker
+          statusText.innerText = aiReady
             ? "Open your hand for green aura!"
-            : "Camera active! Loading hand AI...";
+            : "Camera active! Starting hand tracker...";
 
           if (!isRunning) {
             isRunning = true;
-            requestAnimationFrame(renderLoop);
+            processFrames();
           }
         };
       } catch (err) {
@@ -152,7 +176,7 @@
       window.startCam();
     };
 
-    // 2. Bracket-safe landmark indices
+    // 3. Detect Open Hand (Bracket-safe)
     const TIPS = "8,12,16,20".split(",").map(Number);
     const PIPS = "6,10,14,18".split(",").map(Number);
     const BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
@@ -170,6 +194,7 @@
       return openFingers >= 3;
     }
 
+    // 4. Draw Green Aura & Wrapping Energy Animation
     function drawFastAura(lm, intensity) {
       const w = canvas.width;
       const h = canvas.height;
@@ -222,66 +247,35 @@
       ctx.restore();
     }
 
-    let lastVideoTime = -1;
-    function renderLoop() {
-      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
-        lastVideoTime = video.currentTime;
+    // 5. Smooth Loop
+    let isBusy = false;
+    async function processFrames() {
+      if (video.readyState >= 2) {
+        if (!isBusy) {
+          isBusy = true;
+          try {
+            await hands.send({ image: video });
+          } catch (e) {
+            // Skip single dropped frame safely
+          }
+          isBusy = false;
+        }
+
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         pulseAngle += 0.1;
 
-        if (handLandmarker) {
-          const results = handLandmarker.detectForVideo(video, performance.now());
-          const lm = results.landmarks && results.landmarks.at(0);
+        if (latestLandmarks && isHandOpen(latestLandmarks)) {
+          auraIntensity = Math.min(1, auraIntensity + 0.15);
+        } else {
+          auraIntensity = Math.max(0, auraIntensity - 0.1);
+        }
 
-          if (lm && isHandOpen(lm)) {
-            auraIntensity = Math.min(1, auraIntensity + 0.15);
-          } else {
-            auraIntensity = Math.max(0, auraIntensity - 0.1);
-          }
-
-          if (lm && auraIntensity > 0.02) {
-            drawFastAura(lm, auraIntensity);
-          }
+        if (latestLandmarks && auraIntensity > 0.02) {
+          drawFastAura(latestLandmarks, auraIntensity);
         }
       }
-      requestAnimationFrame(renderLoop);
+      requestAnimationFrame(processFrames);
     }
-
-    // 3. Load MediaPipe with GPU-to-CPU fallback
-    async function initAI() {
-      const modelUrl =
-        "https://googleapis.com";
-      const vision = await FilesetResolver.forVisionTasks(
-        "https://jsdelivr.net"
-      );
-
-      try {
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelUrl, delegate: "GPU" },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        });
-      } catch (gpuErr) {
-        // Fallback to CPU if tablet GPU delegate isn't supported
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: modelUrl, delegate: "CPU" },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        });
-      }
-
-      statusText.innerText = isRunning
-        ? "Open your hand for green aura!"
-        : "AI Ready! Tap Start Camera.";
-    }
-
-    initAI().catch(function (err) {
-      statusText.innerText = "AI error: " + err.message;
-    });
   </script>
 </body>
 </html>
