@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Green Aura v5</title>
+  <title>Green Aura v6</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -61,7 +61,7 @@
 </head>
 <body>
 
-  <div id="status">Tap Start Camera (v5)</div>
+  <div id="status">Tap Start Camera (v6)</div>
   <video id="webcam" autoplay playsinline muted class="mirrored"></video>
   <canvas id="auraCanvas" class="mirrored"></canvas>
 
@@ -69,6 +69,13 @@
     <button id="startBtn" type="button">Start Camera</button>
     <button id="switchBtn" type="button">Switch Camera</button>
   </div>
+
+  <!-- Load TensorFlow.js + Hand Pose Detection (Pure JS/WebGL, no stuck WASM) -->
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://jsdelivr.net"></script>
+  <script src="https://jsdelivr.net"></script>
 
   <script>
     var video = document.getElementById("webcam");
@@ -81,15 +88,19 @@
     var currentStream = null;
     var facingMode = "user";
     var cameraActive = false;
+    var detector = null;
+    var auraLevel = 0;
+    var angle = 0;
 
+    var TIPS = "8,12,16,20".split(",").map(Number);
+    var PIPS = "6,10,14,18".split(",").map(Number);
+    var BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
+
+    // 1. Start Camera Immediately
     function startCameraNow() {
-      statusText.innerText = "Button tapped! Opening camera...";
+      statusText.innerText = "Opening camera...";
       if (currentStream) {
         currentStream.getTracks().forEach(function(t) { t.stop(); });
-      }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        statusText.innerText = "Error: Browser blocked camera API (use HTTPS).";
-        return;
       }
       navigator.mediaDevices.getUserMedia({
         video: { facingMode: facingMode, width: { ideal: 320 }, height: { ideal: 240 } },
@@ -105,9 +116,9 @@
         startBtn.style.display = "none";
         switchBtn.style.display = "inline-block";
         cameraActive = true;
-        statusText.innerText = window.aiReady ? "Open your hand for green aura!" : "Camera ON! Loading hand AI...";
+        statusText.innerText = detector ? "Open your hand for green aura!" : "Camera ON! Initializing AI...";
       }).catch(function(err) {
-        statusText.innerText = "Camera denied/error: " + err.name + " - " + err.message;
+        statusText.innerText = "Camera error: " + err.message;
       });
     }
 
@@ -116,27 +127,35 @@
       facingMode = facingMode === "user" ? "environment" : "user";
       startCameraNow();
     };
-  </script>
 
-  <script src="https://jsdelivr.net" crossorigin="anonymous"></script>
+    // 2. Load Hand Detector with Clear Error Feedback
+    async function setupDetector() {
+      try {
+        if (!window.handPoseDetection) {
+          statusText.innerText = "Script blocked by network. Refresh page.";
+          return;
+        }
+        var model = window.handPoseDetection.SupportedModels.MediaPipeHands;
+        detector = await window.handPoseDetection.createDetector(model, {
+          runtime: "tfjs",
+          modelType: "lite",
+          maxHands: 1
+        });
+        statusText.innerText = cameraActive ? "Open your hand for green aura!" : "AI Ready! Tap Start Camera (v6)";
+      } catch (err) {
+        statusText.innerText = "AI Setup Error: " + err.message;
+      }
+    }
 
-  <script>
-    window.aiReady = false;
-    var latestHand = null;
-    var auraLevel = 0;
-    var angle = 0;
-    var busy = false;
+    setupDetector();
 
-    var TIPS = "8,12,16,20".split(",").map(Number);
-    var PIPS = "6,10,14,18".split(",").map(Number);
-    var BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
-
-    function checkOpen(lm) {
-      var w = lm.at(0);
+    // 3. Check Open Hand (Using keypoints x, y in pixels)
+    function checkOpen(kp) {
+      var w = kp.at(0);
       var count = 0;
       for (var i = 0; i < 4; i++) {
-        var t = lm.at(TIPS.at(i));
-        var p = lm.at(PIPS.at(i));
+        var t = kp.at(TIPS.at(i));
+        var p = kp.at(PIPS.at(i));
         var dt = Math.pow(t.x - w.x, 2) + Math.pow(t.y - w.y, 2);
         var dp = Math.pow(p.x - w.x, 2) + Math.pow(p.y - w.y, 2);
         if (dt > dp * 1.2) count++;
@@ -144,12 +163,13 @@
       return count >= 3;
     }
 
-    function drawAura(lm, power) {
+    // 4. Draw Green Aura & Wrapping Energy
+    function drawAura(kp, power) {
       var w = canvas.width;
       var h = canvas.height;
-      var palm = lm.at(9);
-      var px = palm.x * w;
-      var py = palm.y * h;
+      var palm = kp.at(9);
+      var px = palm.x;
+      var py = palm.y;
 
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
@@ -168,10 +188,10 @@
       ctx.beginPath();
       for (var i = 0; i < BONES.length; i++) {
         var pair = BONES.at(i).split("-");
-        var a = lm.at(Number(pair.at(0)));
-        var b = lm.at(Number(pair.at(1)));
-        ctx.moveTo(a.x * w, a.y * h);
-        ctx.lineTo(b.x * w, b.y * h);
+        var a = kp.at(Number(pair.at(0)));
+        var b = kp.at(Number(pair.at(1)));
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
       }
       ctx.strokeStyle = "rgba(0,255,128," + (0.45 * power) + ")";
       ctx.lineWidth = 8;
@@ -192,47 +212,36 @@
       ctx.restore();
     }
 
-    if (window.Hands) {
-      var hands = new window.Hands({
-        locateFile: function(file) {
-          return "https://jsdelivr.net" + file;
-        }
-      });
-      hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: 0,
-        minDetectionConfidence: 0.45,
-        minTrackingConfidence: 0.45
-      });
-      hands.onResults(function(res) {
-        if (!window.aiReady) {
-          window.aiReady = true;
-          if (cameraActive) statusText.innerText = "Open your hand for green aura!";
-        }
-        latestHand = (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) ? res.multiHandLandmarks.at(0) : null;
-      });
+    // 5. Render Loop
+    async function loop() {
+      if (cameraActive && video.readyState >= 2) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        angle += 0.12;
 
-      function tick() {
-        if (cameraActive && video.readyState >= 2) {
-          if (!busy) {
-            busy = true;
-            hands.send({ image: video }).then(function() { busy = false; }).catch(function() { busy = false; });
-          }
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          angle += 0.12;
-          if (latestHand && checkOpen(latestHand)) {
-            auraLevel = Math.min(1, auraLevel + 0.18);
-          } else {
-            auraLevel = Math.max(0, auraLevel - 0.12);
-          }
-          if (latestHand && auraLevel > 0.02) {
-            drawAura(latestHand, auraLevel);
-          }
+        var kp = null;
+        if (detector) {
+          try {
+            var handsFound = await detector.estimateHands(video, { flipHorizontal: false });
+            if (handsFound && handsFound.length > 0) {
+              kp = handsFound.at(0).keypoints;
+            }
+          } catch (e) {}
         }
-        requestAnimationFrame(tick);
+
+        if (kp && checkOpen(kp)) {
+          auraLevel = Math.min(1, auraLevel + 0.18);
+        } else {
+          auraLevel = Math.max(0, auraLevel - 0.12);
+        }
+
+        if (kp && auraLevel > 0.02) {
+          drawAura(kp, auraLevel);
+        }
       }
-      tick();
+      requestAnimationFrame(loop);
     }
+
+    loop();
   </script>
 </body>
 </html>
