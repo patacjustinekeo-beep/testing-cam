@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Fast Green Aura Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #050a07;
+      color: #e0ffe8;
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #status {
+      position: absolute;
+      top: 16px;
+      z-index: 10;
+      background: rgba(0, 20, 10, 0.8);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      border: 1px solid rgba(0, 255, 128, 0.35);
+      pointer-events: none;
+    }
+    #viewer {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+    video, canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .mirrored { transform: scaleX(-1); }
+    #controls {
+      position: absolute;
+      bottom: 24px;
+      z-index: 10;
+      display: flex;
+      gap: 12px;
+    }
+    button {
+      padding: 12px 22px;
+      font-size: 15px;
+      font-weight: 700;
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+    }
+    button:active { transform: scale(0.95); }
+    #startBtn {
+      background: #00ff80;
+      color: #002211;
+    }
+    #switchBtn {
+      background: rgba(10, 30, 20, 0.85);
+      color: #00ff80;
+      border: 1px solid #00ff80;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="status">Tap Start Camera to begin</div>
+
+  <div id="viewer">
+    <video id="webcam" autoplay playsinline muted class="mirrored"></video>
+    <canvas id="auraCanvas" class="mirrored"></canvas>
+  </div>
+
+  <div id="controls">
+    <button id="startBtn">Start Camera</button>
+    <button id="switchBtn">Switch Camera</button>
+  </div>
+
+  <script type="module">
+    import {
+      HandLandmarker,
+      FilesetResolver
+    } from "https://jsdelivr.net";
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("auraCanvas");
+    const ctx = canvas.getContext("2d", { alpha: true });
+    const startBtn = document.getElementById("startBtn");
+    const switchBtn = document.getElementById("switchBtn");
+    const statusText = document.getElementById("status");
+
+    let handLandmarker = null;
+    let currentStream = null;
+    let facingMode = "user";
+    let isRunning = false;
+    let auraIntensity = 0;
+    let pulseAngle = 0;
+
+    // 1. Load AI in the background without blocking the camera button
+    async function loadAIInBackground() {
+      try {
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://jsdelivr.net/wasm"
+        );
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://googleapis.com",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numHands: 1, // Faster tracking focused on 1 active hand
+          minHandDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        if (isRunning) {
+          statusText.innerText = "Open your hand for green aura!";
+        }
+      } catch (e) {
+        statusText.innerText = "AI failed to load. Refresh page.";
+      }
+    }
+
+    // Start downloading AI immediately on page open
+    loadAIInBackground();
+
+    // 2. Instant Camera Startup (Low-latency 480x360 stream for high FPS)
+    async function startCamera() {
+      if (currentStream) {
+        currentStream.getTracks().forEach((t) => t.stop());
+      }
+
+      statusText.innerText = "Opening camera...";
+
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: facingMode,
+            width: { ideal: 480 },
+            height: { ideal: 360 },
+            frameRate: { ideal: 30 }
+          },
+          audio: false
+        });
+
+        video.srcObject = currentStream;
+        video.classList.toggle("mirrored", facingMode === "user");
+        canvas.classList.toggle("mirrored", facingMode === "user");
+
+        video.onloadeddata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          startBtn.style.display = "none";
+          switchBtn.style.display = "inline-block";
+          statusText.innerText = handLandmarker
+            ? "Open your hand for green aura!"
+            : "Camera active! Finishing AI setup...";
+
+          if (!isRunning) {
+            isRunning = true;
+            requestAnimationFrame(renderLoop);
+          }
+        };
+      } catch (err) {
+        statusText.innerText = "Camera blocked. Ensure HTTPS & allow permission.";
+      }
+    }
+
+    startBtn.addEventListener("click", startCamera);
+
+    switchBtn.addEventListener("click", () => {
+      facingMode = facingMode === "user" ? "environment" : "user";
+      startCamera();
+    });
+
+    // 3. Fast Open-Hand Check
+    const TIPS =;
+    const PIPS =;
+
+    function isHandOpen(lm) {
+      const wrist = lm[0];
+      let openFingers = 0;
+      for (let i = 0; i < 4; i++) {
+        const tip = lm[TIPS[i]];
+        const pip = lm[PIPS[i]];
+        // Compare squared distances (avoids slow Math.hypot square roots)
+        const dTip = (tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2;
+        const dPip = (pip.x - wrist.x) ** 2 + (pip.y - wrist.y) ** 2;
+        if (dTip > dPip * 1.25) openFingers++;
+      }
+      return openFingers >= 3;
+    }
+
+    // 4. Lightweight GPU-Friendly Green Aura & Wrapping Energy
+    const CONNECTIONS = [, [1, 2], [2, 3], [3, 4],
+, [5, 6], [6, 7], [7, 8],
+, [9, 10], [10, 11], [11, 12],
+, [13, 14], [14, 15], [15, 16],
+, [0, 17], [17, 18], [18, 19], [19, 20]
+    ];
+
+    function drawFastAura(lm, intensity) {
+      const w = canvas.width;
+      const h = canvas.height;
+      const px = lm[9].x * w;
+      const py = lm[9].y * h;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+
+      // Fast radial glow (replaces slow shadowBlur)
+      const radius = Math.min(w, h) * 0.35 * intensity;
+      const grad = ctx.createRadialGradient(px, py, 5, px, py, radius);
+      grad.addColorStop(0, `rgba(140, 255, 180, ${0.65 * intensity})`);
+      grad.addColorStop(0.45, `rgba(0, 230, 118, ${0.3 * intensity})`);
+      grad.addColorStop(1, "rgba(0, 255, 100, 0)");
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(px, py, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Double-layered energy lines (outer soft + inner bright core = fast neon look)
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      for (let i = 0; i < CONNECTIONS.length; i++) {
+        const a = lm[CONNECTIONS[i][0]];
+        const b = lm[CONNECTIONS[i][1]];
+        ctx.moveTo(a.x * w, a.y * h);
+        ctx.lineTo(b.x * w, b.y * h);
+      }
+
+      ctx.strokeStyle = `rgba(0, 255, 128, ${0.35 * intensity})`;
+      ctx.lineWidth = 10 + Math.sin(pulseAngle * 2) * 3;
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgba(200, 255, 220, ${0.9 * intensity})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Rotating energy ring wrapping the open hand
+      const ringR = 45 + Math.sin(pulseAngle) * 8;
+      ctx.strokeStyle = `rgba(100, 255, 160, ${0.8 * intensity})`;
+      ctx.lineWidth = 2.5;
+      ctx.setLineDash([18, 12]);
+      ctx.lineDashOffset = -pulseAngle * 20;
+
+      ctx.beginPath();
+      ctx.ellipse(px, py, ringR * 1.25, ringR * 0.85, pulseAngle * 0.5, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // 5. High-FPS Render Loop
+    let lastVideoTime = -1;
+    function renderLoop() {
+      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        pulseAngle += 0.1;
+
+        if (handLandmarker) {
+          const results = handLandmarker.detectForVideo(video, performance.now());
+          const lm = results.landmarks && results.landmarks[0];
+
+          if (lm && isHandOpen(lm)) {
+            auraIntensity = Math.min(1, auraIntensity + 0.15);
+          } else {
+            auraIntensity = Math.max(0, auraIntensity - 0.1);
+          }
+
+          if (lm && auraIntensity > 0.02) {
+            drawFastAura(lm, auraIntensity);
+          }
+        }
+      }
+      requestAnimationFrame(renderLoop);
+    }
+  </script>
+</body>
+</html>
