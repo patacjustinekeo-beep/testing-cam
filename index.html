@@ -27,6 +27,7 @@
       border: 1px solid rgba(0, 255, 128, 0.4);
       pointer-events: none;
       text-align: center;
+      max-width: 90vw;
     }
     #viewer {
       position: relative;
@@ -85,7 +86,12 @@
     <button id="switchBtn" type="button" onclick="window.switchCam()">Switch Camera</button>
   </div>
 
-  <script>
+  <script type="module">
+    import {
+      HandLandmarker,
+      FilesetResolver
+    } from "https://jsdelivr.net";
+
     const video = document.getElementById("webcam");
     const canvas = document.getElementById("auraCanvas");
     const ctx = canvas.getContext("2d");
@@ -100,7 +106,7 @@
     let auraIntensity = 0;
     let pulseAngle = 0;
 
-    // 1. Instant Camera Handler (Works even before AI finishes loading)
+    // 1. Instant Camera Handler
     window.startCam = async function () {
       if (currentStream) {
         currentStream.getTracks().forEach(function (t) { t.stop(); });
@@ -146,7 +152,7 @@
       window.startCam();
     };
 
-    // 2. Bracket-safe landmark index lists using .split()
+    // 2. Bracket-safe landmark indices
     const TIPS = "8,12,16,20".split(",").map(Number);
     const PIPS = "6,10,14,18".split(",").map(Number);
     const BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
@@ -174,7 +180,6 @@
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
 
-      // Soft radial aura glow
       const radius = Math.min(w, h) * 0.36 * intensity;
       const grad = ctx.createRadialGradient(px, py, 5, px, py, radius);
       grad.addColorStop(0, "rgba(140, 255, 180, " + (0.65 * intensity) + ")");
@@ -186,7 +191,6 @@
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Wrapping neon hand skeleton
       ctx.lineCap = "round";
       ctx.beginPath();
       for (let i = 0; i < BONES.length; i++) {
@@ -205,7 +209,6 @@
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Rotating energy ring wrapping the open hand
       const ringR = 45 + Math.sin(pulseAngle) * 8;
       ctx.strokeStyle = "rgba(100, 255, 160, " + (0.8 * intensity) + ")";
       ctx.lineWidth = 2.5;
@@ -244,30 +247,41 @@
       requestAnimationFrame(renderLoop);
     }
 
-    // 3. Load MediaPipe AI in background
-    import("https://jsdelivr.net")
-      .then(async function (visionPkg) {
-        const vision = await visionPkg.FilesetResolver.forVisionTasks(
-          "https://jsdelivr.net/wasm"
-        );
-        handLandmarker = await visionPkg.HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              "https://googleapis.com",
-            delegate: "GPU"
-          },
+    // 3. Load MediaPipe with GPU-to-CPU fallback
+    async function initAI() {
+      const modelUrl =
+        "https://googleapis.com";
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://jsdelivr.net"
+      );
+
+      try {
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: modelUrl, delegate: "GPU" },
           runningMode: "VIDEO",
           numHands: 1,
           minHandDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5
         });
-        if (isRunning) {
-          statusText.innerText = "Open your hand for green aura!";
-        }
-      })
-      .catch(function (err) {
-        statusText.innerText = "AI load issue: " + err.message;
-      });
+      } catch (gpuErr) {
+        // Fallback to CPU if tablet GPU delegate isn't supported
+        handLandmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: modelUrl, delegate: "CPU" },
+          runningMode: "VIDEO",
+          numHands: 1,
+          minHandDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+      }
+
+      statusText.innerText = isRunning
+        ? "Open your hand for green aura!"
+        : "AI Ready! Tap Start Camera.";
+    }
+
+    initAI().catch(function (err) {
+      statusText.innerText = "AI error: " + err.message;
+    });
   </script>
 </body>
 </html>
