@@ -20,12 +20,13 @@
       position: absolute;
       top: 16px;
       z-index: 10;
-      background: rgba(0, 20, 10, 0.8);
+      background: rgba(0, 20, 10, 0.85);
       padding: 8px 16px;
       border-radius: 20px;
       font-size: 13px;
-      border: 1px solid rgba(0, 255, 128, 0.35);
+      border: 1px solid rgba(0, 255, 128, 0.4);
       pointer-events: none;
+      text-align: center;
     }
     #viewer {
       position: relative;
@@ -80,8 +81,8 @@
   </div>
 
   <div id="controls">
-    <button id="startBtn">Start Camera</button>
-    <button id="switchBtn">Switch Camera</button>
+    <button id="startBtn" type="button">Start Camera</button>
+    <button id="switchBtn" type="button">Switch Camera</button>
   </div>
 
   <script type="module">
@@ -104,7 +105,6 @@
     let auraIntensity = 0;
     let pulseAngle = 0;
 
-    // 1. Load AI in the background without blocking the camera button
     async function loadAIInBackground() {
       try {
         const vision = await FilesetResolver.forVisionTasks(
@@ -117,22 +117,20 @@
             delegate: "GPU"
           },
           runningMode: "VIDEO",
-          numHands: 1, // Faster tracking focused on 1 active hand
+          numHands: 1,
           minHandDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5
         });
         if (isRunning) {
           statusText.innerText = "Open your hand for green aura!";
         }
-      } catch (e) {
-        statusText.innerText = "AI failed to load. Refresh page.";
+      } catch (err) {
+        statusText.innerText = "AI error: " + err.message;
       }
     }
 
-    // Start downloading AI immediately on page open
     loadAIInBackground();
 
-    // 2. Instant Camera Startup (Low-latency 480x360 stream for high FPS)
     async function startCamera() {
       if (currentStream) {
         currentStream.getTracks().forEach((t) => t.stop());
@@ -145,8 +143,7 @@
           video: {
             facingMode: facingMode,
             width: { ideal: 480 },
-            height: { ideal: 360 },
-            frameRate: { ideal: 30 }
+            height: { ideal: 360 }
           },
           audio: false
         });
@@ -155,7 +152,8 @@
         video.classList.toggle("mirrored", facingMode === "user");
         canvas.classList.toggle("mirrored", facingMode === "user");
 
-        video.onloadeddata = () => {
+        video.onloadedmetadata = () => {
+          video.play();
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           startBtn.style.display = "none";
@@ -170,7 +168,7 @@
           }
         };
       } catch (err) {
-        statusText.innerText = "Camera blocked. Ensure HTTPS & allow permission.";
+        statusText.innerText = "Camera blocked: " + err.message;
       }
     }
 
@@ -181,7 +179,6 @@
       startCamera();
     });
 
-    // 3. Fast Open-Hand Check
     const TIPS =;
     const PIPS =;
 
@@ -191,7 +188,6 @@
       for (let i = 0; i < 4; i++) {
         const tip = lm[TIPS[i]];
         const pip = lm[PIPS[i]];
-        // Compare squared distances (avoids slow Math.hypot square roots)
         const dTip = (tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2;
         const dPip = (pip.x - wrist.x) ** 2 + (pip.y - wrist.y) ** 2;
         if (dTip > dPip * 1.25) openFingers++;
@@ -199,7 +195,6 @@
       return openFingers >= 3;
     }
 
-    // 4. Lightweight GPU-Friendly Green Aura & Wrapping Energy
     const CONNECTIONS = [, [1, 2], [2, 3], [3, 4],
 , [5, 6], [6, 7], [7, 8],
 , [9, 10], [10, 11], [11, 12],
@@ -210,13 +205,13 @@
     function drawFastAura(lm, intensity) {
       const w = canvas.width;
       const h = canvas.height;
-      const px = lm[9].x * w;
-      const py = lm[9].y * h;
+      const palm = lm[9];
+      const px = palm.x * w;
+      const py = palm.y * h;
 
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
 
-      // Fast radial glow (replaces slow shadowBlur)
       const radius = Math.min(w, h) * 0.35 * intensity;
       const grad = ctx.createRadialGradient(px, py, 5, px, py, radius);
       grad.addColorStop(0, `rgba(140, 255, 180, ${0.65 * intensity})`);
@@ -228,12 +223,12 @@
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fill();
 
-      // Double-layered energy lines (outer soft + inner bright core = fast neon look)
       ctx.lineCap = "round";
       ctx.beginPath();
       for (let i = 0; i < CONNECTIONS.length; i++) {
-        const a = lm[CONNECTIONS[i][0]];
-        const b = lm[CONNECTIONS[i][1]];
+        const pair = CONNECTIONS[i];
+        const a = lm[pair[0]];
+        const b = lm[pair[1]];
         ctx.moveTo(a.x * w, a.y * h);
         ctx.lineTo(b.x * w, b.y * h);
       }
@@ -246,11 +241,10 @@
       ctx.lineWidth = 3;
       ctx.stroke();
 
-      // Rotating energy ring wrapping the open hand
       const ringR = 45 + Math.sin(pulseAngle) * 8;
       ctx.strokeStyle = `rgba(100, 255, 160, ${0.8 * intensity})`;
       ctx.lineWidth = 2.5;
-      ctx.setLineDash([18, 12]);
+      ctx.setLineDash([12, 8]);
       ctx.lineDashOffset = -pulseAngle * 20;
 
       ctx.beginPath();
@@ -260,7 +254,6 @@
       ctx.restore();
     }
 
-    // 5. High-FPS Render Loop
     let lastVideoTime = -1;
     function renderLoop() {
       if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
