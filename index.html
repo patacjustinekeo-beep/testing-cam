@@ -3,104 +3,177 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Green Aura v6</title>
+  <title>Green Aura: Cloud Jumper (v7)</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background: #050a07;
-      color: #e0ffe8;
-      font-family: system-ui, sans-serif;
+      background: #071921;
+      color: #e8fff2;
+      font-family: system-ui, -apple-system, sans-serif;
       height: 100vh;
       overflow: hidden;
+      user-select: none;
     }
-    #status {
-      position: fixed;
-      top: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      background: rgba(0, 20, 10, 0.9);
-      padding: 10px 18px;
-      border-radius: 20px;
-      font-size: 14px;
-      border: 1px solid #00ff80;
-      text-align: center;
-      width: max-content;
-      max-width: 92vw;
-    }
-    video, canvas {
+    video {
       position: fixed;
       top: 0;
       left: 0;
       width: 100vw;
       height: 100vh;
       object-fit: cover;
+      opacity: 0.35;
       z-index: 1;
     }
     .mirrored { transform: scaleX(-1); }
+    canvas#gameCanvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 2;
+    }
+    #hud {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+    }
+    .pill {
+      background: rgba(5, 25, 18, 0.85);
+      border: 1px solid #00ff80;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    #menuOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      background: rgba(4, 18, 14, 0.82);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+    }
+    #menuOverlay h1 {
+      font-size: 32px;
+      color: #00ff80;
+      text-shadow: 0 0 18px rgba(0, 255, 128, 0.6);
+      margin-bottom: 10px;
+    }
+    #menuOverlay p {
+      font-size: 15px;
+      max-width: 340px;
+      line-height: 1.5;
+      margin-bottom: 24px;
+      color: #c8f5dc;
+    }
     #controls {
       position: fixed;
-      bottom: 28px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 9999;
-      display: flex;
-      gap: 12px;
+      bottom: 20px;
+      right: 20px;
+      z-index: 15;
     }
     button {
-      padding: 16px 28px;
+      padding: 14px 28px;
       font-size: 16px;
-      font-weight: 700;
+      font-weight: 800;
       border: none;
       border-radius: 30px;
       cursor: pointer;
     }
-    #startBtn { background: #00ff80; color: #002211; }
-    #switchBtn { background: #0d261a; color: #00ff80; border: 2px solid #00ff80; display: none; }
+    button:active { transform: scale(0.95); }
+    #playBtn {
+      background: #00ff80;
+      color: #002211;
+      box-shadow: 0 0 20px rgba(0, 255, 128, 0.5);
+    }
+    #switchBtn {
+      padding: 10px 18px;
+      font-size: 13px;
+      background: rgba(10, 35, 25, 0.9);
+      color: #00ff80;
+      border: 1px solid #00ff80;
+      display: none;
+    }
   </style>
 </head>
 <body>
 
-  <div id="status">Tap Start Camera (v6)</div>
   <video id="webcam" autoplay playsinline muted class="mirrored"></video>
-  <canvas id="auraCanvas" class="mirrored"></canvas>
+  <canvas id="gameCanvas"></canvas>
+
+  <div id="hud">
+    <div class="pill" id="scorePill">Score: 0</div>
+    <div class="pill" id="auraPill">Aura Boost: Ready</div>
+  </div>
+
+  <div id="menuOverlay">
+    <h1 id="titleText">Aura Cloud Jumper</h1>
+    <p id="descText">Wave your hand in front of the camera (or tap the screen) to ignite your green aura and leap through the clouds!</p>
+    <button id="playBtn" type="button">Start Game & Camera</button>
+  </div>
 
   <div id="controls">
-    <button id="startBtn" type="button">Start Camera</button>
     <button id="switchBtn" type="button">Switch Camera</button>
   </div>
 
-  <!-- Load TensorFlow.js + Hand Pose Detection (Pure JS/WebGL, no stuck WASM) -->
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-  <script src="https://jsdelivr.net"></script>
-
   <script>
     var video = document.getElementById("webcam");
-    var canvas = document.getElementById("auraCanvas");
+    var canvas = document.getElementById("gameCanvas");
     var ctx = canvas.getContext("2d");
-    var startBtn = document.getElementById("startBtn");
+    var scorePill = document.getElementById("scorePill");
+    var auraPill = document.getElementById("auraPill");
+    var menuOverlay = document.getElementById("menuOverlay");
+    var titleText = document.getElementById("titleText");
+    var descText = document.getElementById("descText");
+    var playBtn = document.getElementById("playBtn");
     var switchBtn = document.getElementById("switchBtn");
-    var statusText = document.getElementById("status");
+
+    // Offscreen tiny canvas for ultra-fast motion detection (64x48 pixels)
+    var motionCanvas = document.createElement("canvas");
+    motionCanvas.width = 64;
+    motionCanvas.height = 48;
+    var motionCtx = motionCanvas.getContext("2d", { willReadFrequently: true });
+    var prevFrame = null;
 
     var currentStream = null;
     var facingMode = "user";
-    var cameraActive = false;
-    var detector = null;
-    var auraLevel = 0;
-    var angle = 0;
+    var cameraReady = false;
+    var gameRunning = false;
 
-    var TIPS = "8,12,16,20".split(",").map(Number);
-    var PIPS = "6,10,14,18".split(",").map(Number);
-    var BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
+    var score = 0;
+    var bestScore = 0;
+    var auraGlow = 0;
+    var boostCooldown = 0;
 
-    // 1. Start Camera Immediately
-    function startCameraNow() {
-      statusText.innerText = "Opening camera...";
+    var player = { x: 0, y: 0, vx: 0, vy: 0, radius: 22 };
+    var clouds = new Array();
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // 1. Start Camera (Non-blocking: game works even if camera is denied)
+    function startCamera() {
       if (currentStream) {
         currentStream.getTracks().forEach(function(t) { t.stop(); });
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        auraPill.innerText = "Touch Mode Active";
+        return;
       }
       navigator.mediaDevices.getUserMedia({
         video: { facingMode: facingMode, width: { ideal: 320 }, height: { ideal: 240 } },
@@ -109,139 +182,212 @@
         currentStream = stream;
         video.srcObject = stream;
         video.className = facingMode === "user" ? "mirrored" : "";
-        canvas.className = facingMode === "user" ? "mirrored" : "";
         video.play();
-        canvas.width = 320;
-        canvas.height = 240;
-        startBtn.style.display = "none";
+        cameraReady = true;
         switchBtn.style.display = "inline-block";
-        cameraActive = true;
-        statusText.innerText = detector ? "Open your hand for green aura!" : "Camera ON! Initializing AI...";
-      }).catch(function(err) {
-        statusText.innerText = "Camera error: " + err.message;
+        auraPill.innerText = "Wave Hand to Boost!";
+      }).catch(function() {
+        auraPill.innerText = "Touch Mode (Tap to Jump)";
       });
     }
 
-    startBtn.onclick = startCameraNow;
     switchBtn.onclick = function() {
       facingMode = facingMode === "user" ? "environment" : "user";
-      startCameraNow();
+      startCamera();
     };
 
-    // 2. Load Hand Detector with Clear Error Feedback
-    async function setupDetector() {
-      try {
-        if (!window.handPoseDetection) {
-          statusText.innerText = "Script blocked by network. Refresh page.";
-          return;
-        }
-        var model = window.handPoseDetection.SupportedModels.MediaPipeHands;
-        detector = await window.handPoseDetection.createDetector(model, {
-          runtime: "tfjs",
-          modelType: "lite",
-          maxHands: 1
-        });
-        statusText.innerText = cameraActive ? "Open your hand for green aura!" : "AI Ready! Tap Start Camera (v6)";
-      } catch (err) {
-        statusText.innerText = "AI Setup Error: " + err.message;
-      }
-    }
+    // 2. Detect Hand Wave / Motion from Camera Pixels
+    function detectHandMotion() {
+      if (!cameraReady || video.readyState < 2) return 0;
 
-    setupDetector();
-
-    // 3. Check Open Hand (Using keypoints x, y in pixels)
-    function checkOpen(kp) {
-      var w = kp.at(0);
+      motionCtx.drawImage(video, 0, 0, 64, 48);
+      var frame = motionCtx.getImageData(0, 0, 64, 48).data;
+      var diffSum = 0;
       var count = 0;
-      for (var i = 0; i < 4; i++) {
-        var t = kp.at(TIPS.at(i));
-        var p = kp.at(PIPS.at(i));
-        var dt = Math.pow(t.x - w.x, 2) + Math.pow(t.y - w.y, 2);
-        var dp = Math.pow(p.x - w.x, 2) + Math.pow(p.y - w.y, 2);
-        if (dt > dp * 1.2) count++;
+
+      if (prevFrame) {
+        // Sample every 4th pixel for instant speed
+        for (var i = 0; i < frame.length; i += 16) {
+          var dr = Math.abs(frame.at(i) - prevFrame.at(i));
+          var dg = Math.abs(frame.at(i + 1) - prevFrame.at(i + 1));
+          if (dr + dg > 45) diffSum++;
+          count++;
+        }
       }
-      return count >= 3;
+      prevFrame = new Uint8ClampedArray(frame);
+      return count > 0 ? diffSum / count : 0;
     }
 
-    // 4. Draw Green Aura & Wrapping Energy
-    function drawAura(kp, power) {
-      var w = canvas.width;
-      var h = canvas.height;
-      var palm = kp.at(9);
-      var px = palm.x;
-      var py = palm.y;
+    // 3. Initialize Clouds & Player
+    function resetGame() {
+      score = 0;
+      scorePill.innerText = "Score: 0";
+      player.x = canvas.width * 0.5;
+      player.y = canvas.height * 0.65;
+      player.vx = 3.5;
+      player.vy = -12;
+      auraGlow = 1;
 
+      clouds = new Array();
+      // Starting cloud directly under player
+      clouds.push({
+        x: player.x - 60,
+        y: canvas.height * 0.78,
+        w: 120,
+        h: 22,
+        speed: 0
+      });
+
+      for (var i = 1; i < 8; i++) {
+        clouds.push({
+          x: Math.random() * (canvas.width - 110),
+          y: canvas.height * 0.78 - i * 115,
+          w: 110,
+          h: 22,
+          speed: (Math.random() - 0.5) * 2.2
+        });
+      }
+    }
+
+    function triggerAuraBoost() {
+      if (boostCooldown <= 0) {
+        player.vy = -14.5;
+        auraGlow = 1;
+        boostCooldown = 18;
+      }
+    }
+
+    // Tap anywhere on canvas as backup/extra boost
+    canvas.addEventListener("pointerdown", function() {
+      if (gameRunning) triggerAuraBoost();
+    });
+
+    playBtn.onclick = function() {
+      if (!cameraReady) startCamera();
+      resetGame();
+      menuOverlay.style.display = "none";
+      gameRunning = true;
+    };
+
+    // 4. Draw Cloud & Green Aura Character
+    function drawCloud(c) {
       ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-
-      var r = Math.min(w, h) * 0.42 * power;
-      var g = ctx.createRadialGradient(px, py, 4, px, py, r);
-      g.addColorStop(0, "rgba(150,255,190," + (0.75 * power) + ")");
-      g.addColorStop(0.5, "rgba(0,230,118," + (0.35 * power) + ")");
-      g.addColorStop(1, "rgba(0,255,100,0)");
-      ctx.fillStyle = g;
+      ctx.fillStyle = "rgba(235, 255, 245, 0.92)";
       ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.roundRect(c.x, c.y, c.w, c.h, 12);
       ctx.fill();
 
-      ctx.lineCap = "round";
+      // Puffy tops
       ctx.beginPath();
-      for (var i = 0; i < BONES.length; i++) {
-        var pair = BONES.at(i).split("-");
-        var a = kp.at(Number(pair.at(0)));
-        var b = kp.at(Number(pair.at(1)));
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-      }
-      ctx.strokeStyle = "rgba(0,255,128," + (0.45 * power) + ")";
-      ctx.lineWidth = 8;
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(220,255,230," + (0.95 * power) + ")";
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-
-      var ring = 35 + Math.sin(angle) * 6;
-      ctx.strokeStyle = "rgba(100,255,160," + (0.85 * power) + ")";
-      ctx.lineWidth = 2;
-      ctx.setLineDash("12,6".split(",").map(Number));
-      ctx.lineDashOffset = -angle * 18;
-      ctx.beginPath();
-      ctx.ellipse(px, py, ring * 1.25, ring * 0.85, angle * 0.5, 0, Math.PI * 2);
-      ctx.stroke();
-
+      ctx.arc(c.x + c.w * 0.28, c.y, 18, 0, Math.PI * 2);
+      ctx.arc(c.x + c.w * 0.55, c.y - 4, 22, 0, Math.PI * 2);
+      ctx.arc(c.x + c.w * 0.78, c.y + 2, 16, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     }
 
-    // 5. Render Loop
-    async function loop() {
-      if (cameraActive && video.readyState >= 2) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        angle += 0.12;
+    function drawPlayer() {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
 
-        var kp = null;
-        if (detector) {
-          try {
-            var handsFound = await detector.estimateHands(video, { flipHorizontal: false });
-            if (handsFound && handsFound.length > 0) {
-              kp = handsFound.at(0).keypoints;
-            }
-          } catch (e) {}
-        }
+      // Expanding Green Aura Ring
+      var auraRadius = player.radius * (1.8 + auraGlow * 1.6);
+      var grad = ctx.createRadialGradient(player.x, player.y, 4, player.x, player.y, auraRadius);
+      grad.addColorStop(0, "rgba(180, 255, 210, 0.95)");
+      grad.addColorStop(0.45, "rgba(0, 255, 128, " + (0.45 + auraGlow * 0.4) + ")");
+      grad.addColorStop(1, "rgba(0, 255, 100, 0)");
 
-        if (kp && checkOpen(kp)) {
-          auraLevel = Math.min(1, auraLevel + 0.18);
-        } else {
-          auraLevel = Math.max(0, auraLevel - 0.12);
-        }
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, auraRadius, 0, Math.PI * 2);
+      ctx.fill();
 
-        if (kp && auraLevel > 0.02) {
-          drawAura(kp, auraLevel);
-        }
-      }
-      requestAnimationFrame(loop);
+      // Core Spirit Orb
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#eafff3";
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
-    loop();
-  </script>
-</body>
-</html>
+    // 5. Main Game Loop
+    function gameLoop() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (gameRunning) {
+        // Check camera motion for Green Aura Jump
+        var motion = detectHandMotion();
+        if (motion > 0.14) {
+          triggerAuraBoost();
+          auraPill.innerText = "AURA BOOST!";
+        } else if (boostCooldown <= 0 && cameraReady) {
+          auraPill.innerText = "Wave Hand to Boost!";
+        }
+
+        if (boostCooldown > 0) boostCooldown--;
+        auraGlow = Math.max(0.15, auraGlow - 0.03);
+
+        // Horizontal glide & wall bounce
+        player.x += player.vx;
+        if (player.x < player.radius || player.x > canvas.width - player.radius) {
+          player.vx *= -1;
+        }
+
+        // Gravity
+        player.vy += 0.42;
+        player.y += player.vy;
+
+        // Bounce off clouds when falling
+        if (player.vy > 0) {
+          for (var i = 0; i < clouds.length; i++) {
+            var c = clouds.at(i);
+            if (
+              player.x + 12 > c.x &&
+              player.x - 12 < c.x + c.w &&
+              player.y + player.radius >= c.y &&
+player.y + player.radius <= c.y + c.h + 14
+) {
+player.vy = -13.5;
+auraGlow = 0.85;
+}
+}
+}
+// Scroll world upward as player climbs
+if (player.y < canvas.height * 0.42) {
+var climb = canvas.height * 0.42 - player.y;
+player.y = canvas.height * 0.42;
+score += Math.floor(climb * 0.1);
+scorePill.innerText = "Score: " + score;
+for (var j = 0; j < clouds.length; j++) {
+var cl = clouds.at(j);
+cl.y += climb;
+if (cl.y > canvas.height + 30) {
+cl.y = -20;
+cl.x = Math.random() * (canvas.width - cl.w);
+cl.speed = (Math.random() - 0.5) * 2.8;
+}
+}
+}
+// Move & draw clouds
+for (var k = 0; k < clouds.length; k++) {
+var cloud = clouds.at(k);
+cloud.x += cloud.speed;
+if (cloud.x < 0 || cloud.x + cloud.w > canvas.width) cloud.speed *= -1;
+drawCloud(cloud);
+}
+drawPlayer();
+// Game Over check
+if (player.y > canvas.height + 50) {
+gameRunning = false;
+if (score > bestScore) bestScore = score;
+titleText.innerText = "Fell Through the Clouds!";
+descText.innerText = "Score: " + score + "  |  Best: " + bestScore + "\nWave your hand or tap to keep climbing!";
+playBtn.innerText = "Play Again";
+menuOverlay.style.display = "flex";
+}
+}
+requestAnimationFrame(gameLoop);
+}
+gameLoop();
+
