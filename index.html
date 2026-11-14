@@ -81,19 +81,14 @@
   </div>
 
   <div id="controls">
-    <button id="startBtn" type="button">Start Camera</button>
-    <button id="switchBtn" type="button">Switch Camera</button>
+    <button id="startBtn" type="button" onclick="window.startCam()">Start Camera</button>
+    <button id="switchBtn" type="button" onclick="window.switchCam()">Switch Camera</button>
   </div>
 
-  <script type="module">
-    import {
-      HandLandmarker,
-      FilesetResolver
-    } from "https://jsdelivr.net";
-
+  <script>
     const video = document.getElementById("webcam");
     const canvas = document.getElementById("auraCanvas");
-    const ctx = canvas.getContext("2d", { alpha: true });
+    const ctx = canvas.getContext("2d");
     const startBtn = document.getElementById("startBtn");
     const switchBtn = document.getElementById("switchBtn");
     const statusText = document.getElementById("status");
@@ -105,38 +100,12 @@
     let auraIntensity = 0;
     let pulseAngle = 0;
 
-    async function loadAIInBackground() {
-      try {
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://jsdelivr.net/wasm"
-        );
-        handLandmarker = await HandLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              "https://googleapis.com",
-            delegate: "GPU"
-          },
-          runningMode: "VIDEO",
-          numHands: 1,
-          minHandDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5
-        });
-        if (isRunning) {
-          statusText.innerText = "Open your hand for green aura!";
-        }
-      } catch (err) {
-        statusText.innerText = "AI error: " + err.message;
-      }
-    }
-
-    loadAIInBackground();
-
-    async function startCamera() {
+    // 1. Instant Camera Handler (Works even before AI finishes loading)
+    window.startCam = async function () {
       if (currentStream) {
-        currentStream.getTracks().forEach((t) => t.stop());
+        currentStream.getTracks().forEach(function (t) { t.stop(); });
       }
-
-      statusText.innerText = "Opening camera...";
+      statusText.innerText = "Requesting camera permission...";
 
       try {
         currentStream = await navigator.mediaDevices.getUserMedia({
@@ -152,7 +121,7 @@
         video.classList.toggle("mirrored", facingMode === "user");
         canvas.classList.toggle("mirrored", facingMode === "user");
 
-        video.onloadedmetadata = () => {
+        video.onloadedmetadata = function () {
           video.play();
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
@@ -160,7 +129,7 @@
           switchBtn.style.display = "inline-block";
           statusText.innerText = handLandmarker
             ? "Open your hand for green aura!"
-            : "Camera active! Finishing AI setup...";
+            : "Camera active! Loading hand AI...";
 
           if (!isRunning) {
             isRunning = true;
@@ -170,52 +139,46 @@
       } catch (err) {
         statusText.innerText = "Camera blocked: " + err.message;
       }
-    }
+    };
 
-    startBtn.addEventListener("click", startCamera);
-
-    switchBtn.addEventListener("click", () => {
+    window.switchCam = function () {
       facingMode = facingMode === "user" ? "environment" : "user";
-      startCamera();
-    });
+      window.startCam();
+    };
 
-    const TIPS =;
-    const PIPS =;
+    // 2. Bracket-safe landmark index lists using .split()
+    const TIPS = "8,12,16,20".split(",").map(Number);
+    const PIPS = "6,10,14,18".split(",").map(Number);
+    const BONES = "0-1,1-2,2-3,3-4,0-5,5-6,6-7,7-8,5-9,9-10,10-11,11-12,9-13,13-14,14-15,15-16,13-17,0-17,17-18,18-19,19-20".split(",");
 
     function isHandOpen(lm) {
-      const wrist = lm[0];
+      const wrist = lm.at(0);
       let openFingers = 0;
       for (let i = 0; i < 4; i++) {
-        const tip = lm[TIPS[i]];
-        const pip = lm[PIPS[i]];
-        const dTip = (tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2;
-        const dPip = (pip.x - wrist.x) ** 2 + (pip.y - wrist.y) ** 2;
+        const tip = lm.at(TIPS.at(i));
+        const pip = lm.at(PIPS.at(i));
+        const dTip = Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2);
+        const dPip = Math.pow(pip.x - wrist.x, 2) + Math.pow(pip.y - wrist.y, 2);
         if (dTip > dPip * 1.25) openFingers++;
       }
       return openFingers >= 3;
     }
 
-    const CONNECTIONS = [, [1, 2], [2, 3], [3, 4],
-, [5, 6], [6, 7], [7, 8],
-, [9, 10], [10, 11], [11, 12],
-, [13, 14], [14, 15], [15, 16],
-, [0, 17], [17, 18], [18, 19], [19, 20]
-    ];
-
     function drawFastAura(lm, intensity) {
       const w = canvas.width;
       const h = canvas.height;
-      const palm = lm[9];
+      const palm = lm.at(9);
       const px = palm.x * w;
       const py = palm.y * h;
 
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
 
-      const radius = Math.min(w, h) * 0.35 * intensity;
+      // Soft radial aura glow
+      const radius = Math.min(w, h) * 0.36 * intensity;
       const grad = ctx.createRadialGradient(px, py, 5, px, py, radius);
-      grad.addColorStop(0, `rgba(140, 255, 180, ${0.65 * intensity})`);
-      grad.addColorStop(0.45, `rgba(0, 230, 118, ${0.3 * intensity})`);
+      grad.addColorStop(0, "rgba(140, 255, 180, " + (0.65 * intensity) + ")");
+      grad.addColorStop(0.45, "rgba(0, 230, 118, " + (0.3 * intensity) + ")");
       grad.addColorStop(1, "rgba(0, 255, 100, 0)");
 
       ctx.fillStyle = grad;
@@ -223,28 +186,30 @@
       ctx.arc(px, py, radius, 0, Math.PI * 2);
       ctx.fill();
 
+      // Wrapping neon hand skeleton
       ctx.lineCap = "round";
       ctx.beginPath();
-      for (let i = 0; i < CONNECTIONS.length; i++) {
-        const pair = CONNECTIONS[i];
-        const a = lm[pair[0]];
-        const b = lm[pair[1]];
+      for (let i = 0; i < BONES.length; i++) {
+        const parts = BONES.at(i).split("-");
+        const a = lm.at(Number(parts.at(0)));
+        const b = lm.at(Number(parts.at(1)));
         ctx.moveTo(a.x * w, a.y * h);
         ctx.lineTo(b.x * w, b.y * h);
       }
 
-      ctx.strokeStyle = `rgba(0, 255, 128, ${0.35 * intensity})`;
+      ctx.strokeStyle = "rgba(0, 255, 128, " + (0.35 * intensity) + ")";
       ctx.lineWidth = 10 + Math.sin(pulseAngle * 2) * 3;
       ctx.stroke();
 
-      ctx.strokeStyle = `rgba(200, 255, 220, ${0.9 * intensity})`;
+      ctx.strokeStyle = "rgba(200, 255, 220, " + (0.9 * intensity) + ")";
       ctx.lineWidth = 3;
       ctx.stroke();
 
+      // Rotating energy ring wrapping the open hand
       const ringR = 45 + Math.sin(pulseAngle) * 8;
-      ctx.strokeStyle = `rgba(100, 255, 160, ${0.8 * intensity})`;
+      ctx.strokeStyle = "rgba(100, 255, 160, " + (0.8 * intensity) + ")";
       ctx.lineWidth = 2.5;
-      ctx.setLineDash([12, 8]);
+      ctx.setLineDash("14,8".split(",").map(Number));
       ctx.lineDashOffset = -pulseAngle * 20;
 
       ctx.beginPath();
@@ -263,7 +228,7 @@
 
         if (handLandmarker) {
           const results = handLandmarker.detectForVideo(video, performance.now());
-          const lm = results.landmarks && results.landmarks[0];
+          const lm = results.landmarks && results.landmarks.at(0);
 
           if (lm && isHandOpen(lm)) {
             auraIntensity = Math.min(1, auraIntensity + 0.15);
@@ -278,6 +243,31 @@
       }
       requestAnimationFrame(renderLoop);
     }
+
+    // 3. Load MediaPipe AI in background
+    import("https://jsdelivr.net")
+      .then(async function (visionPkg) {
+        const vision = await visionPkg.FilesetResolver.forVisionTasks(
+          "https://jsdelivr.net/wasm"
+        );
+        handLandmarker = await visionPkg.HandLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://googleapis.com",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numHands: 1,
+          minHandDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5
+        });
+        if (isRunning) {
+          statusText.innerText = "Open your hand for green aura!";
+        }
+      })
+      .catch(function (err) {
+        statusText.innerText = "AI load issue: " + err.message;
+      });
   </script>
 </body>
 </html>
